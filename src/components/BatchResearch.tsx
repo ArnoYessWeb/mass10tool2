@@ -20,7 +20,11 @@ import {
   ArrowRight,
   Loader2,
   DollarSign,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Search,
+  Check,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import {
   ProductPayload,
@@ -64,6 +68,22 @@ export default function BatchResearch({
   const [isRunning, setIsRunning] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
   const [pushingAll, setPushingAll] = useState(false);
+  
+  // States for enhanced Review & Edit modal
+  const [selectedReviewItemId, setSelectedReviewItemId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeEditTab, setActiveEditTab] = useState<"info" | "price" | "images" | "specs">("info");
+  const [pushingItemId, setPushingItemId] = useState<string | null>(null);
+
+  // Set default selected item in review modal
+  useEffect(() => {
+    if (isReviewing && !selectedReviewItemId) {
+      const firstItem = queue.find(item => item.payload);
+      if (firstItem) {
+        setSelectedReviewItemId(firstItem.id);
+      }
+    }
+  }, [isReviewing, queue, selectedReviewItemId]);
   
   // Ref to track running state in async loops
   const isRunningRef = useRef(false);
@@ -515,6 +535,79 @@ export default function BatchResearch({
     );
   };
 
+  const includeInQueue = (itemId: string) => {
+    setQueue(prev =>
+      prev.map(item => {
+        if (item.id === itemId) {
+          return {
+            ...item,
+            status: "done" as const,
+            reason: "Researched successfully"
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  const handlePushSingle = async (itemId: string) => {
+    const item = queue.find(it => it.id === itemId);
+    if (!item || !item.payload) return;
+
+    setPushingItemId(itemId);
+    addToast(`Syncing SKU ${item.sku} to store...`, "info");
+
+    try {
+      const response = await fetch("/api/push", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          product: item.payload,
+          customUrl: customSupabaseUrl,
+          customKey: customSupabaseKey,
+          customTable: customSupabaseTable
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to push.");
+      }
+
+      setQueue(prev =>
+        prev.map(it => {
+          if (it.id === itemId) {
+            return {
+              ...it,
+              reason: "Synced ✓"
+            };
+          }
+          return it;
+        })
+      );
+      addToast(`Successfully synced SKU ${item.sku}!`, "success");
+    } catch (err: any) {
+      const errMsg = err.message || "Unknown error";
+      setQueue(prev =>
+        prev.map(it => {
+          if (it.id === itemId) {
+            return {
+              ...it,
+              reason: `Push Error: ${errMsg}`
+            };
+          }
+          return it;
+        })
+      );
+      addToast(`Sync failed for ${item.sku}: ${errMsg}`, "error");
+    } finally {
+      setPushingItemId(null);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6 p-1 fade-in h-full">
       {/* BUTTONS BAR */}
@@ -743,295 +836,706 @@ export default function BatchResearch({
       </div>
 
       {/* REVIEW & EDIT OVERLAY MODAL */}
-      {isReviewing && (
-        <div className="fixed inset-0 bg-[#0b0d13]/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fadeIn">
-          <div className="glass-panel w-full max-w-5xl h-[85vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl shadow-black/50">
-            {/* Modal Header */}
-            <div className="bg-[#151823] px-6 py-4 border-b border-[#272c3f] flex items-center justify-between">
-              <div className="flex flex-col gap-0.5">
-                <h3 className="text-base font-bold text-[#e8eaf0] flex items-center gap-2">
-                  <Edit className="h-4 w-4 text-[#f5a623]" />
-                  <span>Review Researched Products</span>
-                </h3>
-                <span className="text-xs text-[#8c92a4]">
-                  Update details inline. Excluded products will not be included in the CSV or pushed to the store.
-                </span>
+      {isReviewing && (() => {
+        const reviewedItems = queue.filter(item => item.payload);
+        const filteredReviewedItems = reviewedItems.filter(item => {
+          const q = searchQuery.toLowerCase().trim();
+          if (!q) return true;
+          return (
+            item.sku.toLowerCase().includes(q) ||
+            (item.payload?.name || "").toLowerCase().includes(q) ||
+            (item.payload?.brand || "").toLowerCase().includes(q)
+          );
+        });
+
+        const selectedItem = queue.find(item => item.id === selectedReviewItemId) || filteredReviewedItems[0];
+        const currentItemIndex = selectedItem ? filteredReviewedItems.findIndex(it => it.id === selectedItem.id) : -1;
+        const p = selectedItem?.payload;
+        const isExcluded = selectedItem?.status === "skipped";
+        const isSynced = selectedItem?.reason?.startsWith("Synced");
+
+        return (
+          <div className="fixed inset-0 bg-[#0b0d13]/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fadeIn">
+            <div className="glass-panel w-full max-w-6xl h-[90vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl shadow-black/60 border border-[#272c3f]">
+              {/* Header */}
+              <div className="bg-[#151823] px-6 py-4 border-b border-[#272c3f] flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#f5a623]/10 flex items-center justify-center border border-[#f5a623]/35 shadow-sm shadow-[#f5a623]/5">
+                    <Edit className="h-5 w-5 text-[#f5a623]" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#e8eaf0] uppercase tracking-wider">
+                      Review & Edit Products ({reviewedItems.length})
+                    </h3>
+                    <p className="text-[11px] text-[#8c92a4]">
+                      Edit items individually, preview images, and push directly to store to verify sync behavior.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsReviewing(false);
+                    setSearchQuery("");
+                  }}
+                  className="text-[#8c92a4] hover:text-[#e8eaf0] p-1.5 rounded-lg hover:bg-[#272c3f] transition-all cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <button
-                onClick={() => setIsReviewing(false)}
-                className="text-[#8c92a4] hover:text-[#e8eaf0] p-1.5 rounded-lg hover:bg-[#272c3f] transition-all cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
 
-            {/* Modal Scrollable Body */}
-            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-              {queue
-                .filter(item => item.payload)
-                .map((item) => {
-                  const p = item.payload!;
-                  const isExcluded = item.status === "skipped";
+              {/* Body layout (sidebar + editor) */}
+              <div className="flex-1 flex overflow-hidden min-h-0">
+                {/* Sidebar (320px) */}
+                <div className="w-80 border-r border-[#272c3f]/50 flex flex-col bg-[#11141e]/50">
+                  {/* Sidebar Search */}
+                  <div className="p-4 border-b border-[#272c3f]/30">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#8c92a4]" />
+                      <input
+                        type="text"
+                        placeholder="Search SKU or Name..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        className="w-full bg-[#151823] text-xs text-[#e8eaf0] pl-9 pr-4 py-2 rounded-lg border border-[#272c3f] focus:outline-none focus:border-[#01b3fd] transition-colors"
+                      />
+                    </div>
+                  </div>
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`glass-card rounded-xl p-5 border relative overflow-hidden transition-all duration-200 ${
-                        isExcluded 
-                          ? "bg-red-500/5 border-red-500/20 opacity-60" 
-                          : "bg-[#1c2030]/50 border-[#272c3f]"
-                      }`}
-                    >
-                      {/* Top banner info */}
-                      <div className="flex justify-between items-center mb-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-[#01b3fd] font-mono">{p.sku}</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                            isExcluded ? "bg-red-500/10 text-[#ef4444]" : "bg-emerald-500/10 text-[#10b981]"
-                          }`}>
-                            {isExcluded ? "EXCLUDED" : "READY"}
+                  {/* Sidebar Scroll List */}
+                  <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1.5">
+                    {filteredReviewedItems.length > 0 ? (
+                      filteredReviewedItems.map(item => {
+                        const itemPayload = item.payload!;
+                        const isItSelected = selectedItem?.id === item.id;
+                        const isItExcluded = item.status === "skipped";
+                        const isItSynced = item.reason?.startsWith("Synced");
+
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={() => {
+                              setSelectedReviewItemId(item.id);
+                            }}
+                            className={`w-full text-left p-3 rounded-xl border flex flex-col gap-1.5 transition-all cursor-pointer ${
+                              isItSelected
+                                ? "bg-[#01b3fd]/10 border-[#01b3fd] shadow-lg shadow-[#01b3fd]/5"
+                                : "bg-[#1c2030]/20 border-[#272c3f]/50 hover:bg-[#1c2030]/40 hover:border-[#272c3f]"
+                            }`}
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <span className="text-xs font-bold text-[#e8eaf0] font-mono break-all leading-tight">
+                                {item.sku}
+                              </span>
+                              {isItExcluded ? (
+                                <span className="bg-red-500/10 text-[#ef4444] border border-red-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  Excluded
+                                </span>
+                              ) : isItSynced ? (
+                                <span className="bg-emerald-500/10 text-[#10b981] border border-emerald-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  Synced
+                                </span>
+                              ) : (
+                                <span className="bg-blue-500/10 text-[#01b3fd] border border-blue-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  Ready
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-[#8c92a4] truncate w-full font-medium">
+                              {itemPayload.brand ? `[${itemPayload.brand}] ` : ""}{itemPayload.name || item.desc}
+                            </span>
+                            <div className="flex justify-between items-center text-[10px] text-[#8c92a4] font-mono">
+                              <span>Cost: R {item.cost.toFixed(2)}</span>
+                              <span className="text-[#e8eaf0] font-bold">R {(itemPayload.price_excl_vat || 0).toFixed(2)}</span>
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center p-8 text-xs text-[#8c92a4] italic">
+                        No matching items found.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Editor Content Panel (70%) */}
+                <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[#0f111a]/40">
+                  {selectedItem && p ? (
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                      {/* Top selected item info & actions */}
+                      <div className="bg-[#151823]/50 px-6 py-4 border-b border-[#272c3f]/50 flex flex-wrap gap-4 items-center justify-between">
+                        <div className="flex flex-col gap-0.5 max-w-[50%]">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-extrabold text-[#01b3fd] font-mono leading-none">
+                              {p.sku}
+                            </span>
+                            <span className="text-xs text-[#8c92a4] font-semibold italic">
+                              ({p.brand || "No Brand"})
+                            </span>
+                          </div>
+                          <span className="text-xs text-[#8c92a4] truncate w-full font-medium" title={p.name}>
+                            {p.name || "Untitled Product"}
                           </span>
                         </div>
 
-                        {!isExcluded && (
+                        {/* Top quick actions */}
+                        <div className="flex items-center gap-3">
+                          {/* Exclude / Include toggle */}
+                          {isExcluded ? (
+                            <button
+                              onClick={() => includeInQueue(selectedItem.id)}
+                              className="text-xs text-[#10b981] hover:text-[#10b981]/80 font-bold px-3 py-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                              <span>Include Product</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => excludeFromQueue(selectedItem.id)}
+                              className="text-xs text-[#ef4444] hover:text-[#ef4444]/80 font-bold px-3 py-1.5 rounded-lg border border-red-500/25 bg-red-500/5 hover:bg-red-500/10 transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Exclude Product</span>
+                            </button>
+                          )}
+
+                          {/* Search tools links */}
+                          <div className="h-6 w-px bg-[#272c3f]/80"></div>
+
+                          {/* Sync to Store Action */}
                           <button
-                            onClick={() => excludeFromQueue(item.id)}
-                            className="text-xs text-[#ef4444] hover:text-red-400 font-semibold px-2 py-1 rounded hover:bg-red-500/10 transition-colors flex items-center gap-1 cursor-pointer"
+                            onClick={() => handlePushSingle(selectedItem.id)}
+                            disabled={pushingItemId === selectedItem.id || isExcluded}
+                            className="bg-[#01b3fd]/10 hover:bg-[#01b3fd]/20 text-[#01b3fd] border border-[#01b3fd]/30 disabled:border-[#272c3f] disabled:bg-[#1c2030] disabled:text-[#8c92a4] text-xs font-bold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            <span>Exclude Product</span>
+                            {pushingItemId === selectedItem.id ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <span>Syncing...</span>
+                              </>
+                            ) : isSynced ? (
+                              <>
+                                <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+                                <span className="text-emerald-400">Synced ✓</span>
+                              </>
+                            ) : (
+                              <>
+                                <CloudLightning className="h-3.5 w-3.5" />
+                                <span>Sync to Store</span>
+                              </>
+                            )}
                           </button>
+                        </div>
+                      </div>
+
+                      {/* Editor Tabs bar */}
+                      <div className="flex border-b border-[#272c3f]/30 px-6 bg-[#11141e]/20 shrink-0">
+                        {([
+                          { id: "info", label: "Product Info" },
+                          { id: "price", label: "Pricing & Margin" },
+                          { id: "images", label: "Images & Gallery" },
+                          { id: "specs", label: "Specifications" }
+                        ] as const).map(tab => (
+                          <button
+                            key={tab.id}
+                            onClick={() => setActiveEditTab(tab.id)}
+                            className={`pb-2.5 pt-3 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                              activeEditTab === tab.id
+                                ? "border-[#01b3fd] text-[#01b3fd]"
+                                : "border-transparent text-[#8c92a4] hover:text-[#e8eaf0]"
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Tab contents (Scrollable container) */}
+                      <div className="flex-1 overflow-y-auto p-6">
+                        {/* TAB 1: PRODUCT INFO */}
+                        {activeEditTab === "info" && (
+                          <div className="flex flex-col gap-4 max-w-3xl">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">SKU</label>
+                                <input
+                                  type="text"
+                                  value={p.sku}
+                                  onChange={e => updateModalPayload(selectedItem.id, "sku", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50 font-mono"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Brand</label>
+                                <input
+                                  type="text"
+                                  value={p.brand}
+                                  onChange={e => updateModalPayload(selectedItem.id, "brand", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                              <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Product Name</label>
+                              <input
+                                type="text"
+                                value={p.name}
+                                onChange={e => updateModalPayload(selectedItem.id, "name", e.target.value)}
+                                disabled={isExcluded}
+                                className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Category</label>
+                                <input
+                                  type="text"
+                                  value={p.category}
+                                  onChange={e => updateModalPayload(selectedItem.id, "category", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Subcategory</label>
+                                <input
+                                  type="text"
+                                  value={p.subcategory}
+                                  onChange={e => updateModalPayload(selectedItem.id, "subcategory", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Warranty</label>
+                                <input
+                                  type="text"
+                                  value={p.warranty}
+                                  onChange={e => updateModalPayload(selectedItem.id, "warranty", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Shipping Class</label>
+                                <input
+                                  type="text"
+                                  value={p.shipping_class}
+                                  onChange={e => updateModalPayload(selectedItem.id, "shipping_class", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Supplier</label>
+                                <input
+                                  type="text"
+                                  value={p.supplier}
+                                  onChange={e => updateModalPayload(selectedItem.id, "supplier", e.target.value)}
+                                  disabled={isExcluded}
+                                  className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                              <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Short Description</label>
+                              <textarea
+                                rows={3}
+                                value={p.short_description}
+                                onChange={e => updateModalPayload(selectedItem.id, "short_description", e.target.value)}
+                                disabled={isExcluded}
+                                className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg p-3 focus:outline-none focus:border-[#01b3fd] resize-y disabled:opacity-50"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                              <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Long Description</label>
+                              <textarea
+                                rows={5}
+                                value={p.description}
+                                onChange={e => updateModalPayload(selectedItem.id, "description", e.target.value)}
+                                disabled={isExcluded}
+                                className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg p-3 focus:outline-none focus:border-[#01b3fd] resize-y disabled:opacity-50"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TAB 2: PRICING & MARGIN */}
+                        {activeEditTab === "price" && (() => {
+                          const costPriceExcl = p.cost_price_excl_vat || 0;
+                          const sellPriceExcl = p.price_excl_vat || 0;
+
+                          const costPriceIncl = costPriceExcl * 1.15;
+                          const sellPriceIncl = sellPriceExcl * 1.15;
+
+                          const profitExcl = sellPriceExcl - costPriceExcl;
+                          const profitIncl = sellPriceIncl - costPriceIncl;
+
+                          const actualMarkup = costPriceExcl > 0 ? (profitExcl / costPriceExcl) * 100 : 0;
+                          const actualMargin = sellPriceExcl > 0 ? (profitExcl / sellPriceExcl) * 100 : 0;
+
+                          return (
+                            <div className="flex flex-col gap-6 max-w-4xl">
+                              {/* Pricing Inputs */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="flex flex-col gap-1.5">
+                                  <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">
+                                    Cost Price (Excl VAT)
+                                  </label>
+                                  <div className="relative">
+                                    <span className="absolute left-3.5 top-2 text-[#8c92a4] text-sm font-semibold">R</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={p.cost_price_excl_vat}
+                                      onChange={e => {
+                                        const costVal = parseFloat(e.target.value) || 0;
+                                        const pricing = calculatePricing(costVal, markup);
+                                        updateModalPayload(selectedItem.id, "cost_price_excl_vat", costVal);
+                                        updateModalPayload(selectedItem.id, "price_excl_vat", pricing.sellExcl);
+                                      }}
+                                      disabled={isExcluded}
+                                      className="w-full bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg pl-8 pr-4 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50 font-mono"
+                                    />
+                                  </div>
+                                  <span className="text-[10px] text-[#8c92a4] italic font-mono">
+                                    Cost Incl VAT: R {costPriceIncl.toFixed(2)}
+                                  </span>
+                                </div>
+
+                                <div className="flex flex-col gap-1.5">
+                                  <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">
+                                    Selling Price (Excl VAT)
+                                  </label>
+                                  <div className="relative">
+                                    <span className="absolute left-3.5 top-2 text-[#8c92a4] text-sm font-semibold">R</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={p.price_excl_vat}
+                                      onChange={e => updateModalPayload(selectedItem.id, "price_excl_vat", parseFloat(e.target.value) || 0)}
+                                      disabled={isExcluded}
+                                      className="w-full bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg pl-8 pr-4 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50 font-mono"
+                                    />
+                                  </div>
+                                  <span className="text-[10px] text-[#8c92a4] italic font-mono">
+                                    Selling Incl VAT: R {sellPriceIncl.toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Profit Stats Dashboard */}
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="glass-panel border border-[#272c3f]/50 p-4 rounded-xl flex flex-col gap-1">
+                                  <span className="text-[10px] text-[#8c92a4] font-semibold uppercase tracking-wider">Net Profit</span>
+                                  <span className="text-lg font-bold font-mono text-[#10b981]">
+                                    R {profitExcl.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="glass-panel border border-[#272c3f]/50 p-4 rounded-xl flex flex-col gap-1">
+                                  <span className="text-[10px] text-[#8c92a4] font-semibold uppercase tracking-wider">Gross Margin</span>
+                                  <span className="text-lg font-bold font-mono text-[#e8eaf0]">
+                                    {actualMargin.toFixed(1)}%
+                                  </span>
+                                </div>
+                                <div className="glass-panel border border-[#272c3f]/50 p-4 rounded-xl flex flex-col gap-1">
+                                  <span className="text-[10px] text-[#8c92a4] font-semibold uppercase tracking-wider">Markup Earned</span>
+                                  <span className="text-lg font-bold font-mono text-[#f5a623]">
+                                    {actualMarkup.toFixed(1)}%
+                                  </span>
+                                </div>
+                                <div className="glass-panel border border-[#272c3f]/50 p-4 rounded-xl flex flex-col gap-1 justify-center">
+                                  <button
+                                    onClick={() => {
+                                      const pricing = calculatePricing(costPriceExcl, markup);
+                                      updateModalPayload(selectedItem.id, "price_excl_vat", pricing.sellExcl);
+                                    }}
+                                    disabled={isExcluded}
+                                    className="w-full text-center bg-[#272c3f] hover:bg-[#21253a] border border-[#272c3f]/70 text-[#e8eaf0] text-[10px] font-bold py-2 rounded-lg cursor-pointer transition-colors disabled:opacity-50"
+                                  >
+                                    Reset to Default ({markup}%)
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Price check alert / note */}
+                              <div className="bg-[#1c2030]/60 border border-[#272c3f]/60 rounded-xl p-4 flex gap-3.5 text-xs text-[#8c92a4]">
+                                <DollarSign className="h-5 w-5 text-[#f5a623] shrink-0" />
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-bold text-[#e8eaf0]">South African VAT is auto-calculated at 15%.</span>
+                                  <span>Ensure the selling price allows for competitive positioning. Use the compare tools in the footer of this pane to double-check local vendor valuations.</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* TAB 3: IMAGES & GALLERY */}
+                        {activeEditTab === "images" && (
+                          <div className="flex flex-col gap-6 max-w-4xl">
+                            {/* Main Image Setup */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                              <div className="md:col-span-2 flex flex-col gap-4">
+                                <div className="flex flex-col gap-1.5">
+                                  <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">Main Image URL</label>
+                                  <input
+                                    type="text"
+                                    value={p.image_url}
+                                    onChange={e => updateModalPayload(selectedItem.id, "image_url", e.target.value)}
+                                    disabled={isExcluded}
+                                    className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
+                                    placeholder="https://example.com/image.jpg"
+                                  />
+                                </div>
+
+                                <div className="flex flex-col gap-1.5">
+                                  <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">
+                                    Gallery URLs (one per line)
+                                  </label>
+                                  <textarea
+                                    rows={4}
+                                    value={p.gallery_urls.replace(/\|/g, "\n")}
+                                    onChange={e => updateModalPayload(selectedItem.id, "gallery_urls", e.target.value.split("\n").filter(Boolean).join("|"))}
+                                    disabled={isExcluded}
+                                    className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg p-3 focus:outline-none focus:border-[#01b3fd] resize-y disabled:opacity-50 font-mono"
+                                    placeholder="Paste additional gallery image URLs (one URL per line)..."
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Main image preview */}
+                              <div className="flex flex-col gap-2">
+                                <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider text-center">
+                                  Main Preview
+                                </label>
+                                <div className="aspect-square w-full rounded-xl border border-[#272c3f] overflow-hidden bg-[#151823]/40 flex items-center justify-center p-3 relative shadow-inner">
+                                  {p.image_url ? (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img
+                                      src={p.image_url}
+                                      alt="Main Preview"
+                                      className="max-w-full max-h-full object-contain rounded-lg transition-transform duration-300 hover:scale-105"
+                                      onError={(e) => {
+                                        (e.target as HTMLElement).style.display = "none";
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="flex flex-col items-center gap-1.5 text-[#8c92a4] text-xs font-semibold">
+                                      <ImageIcon className="h-8 w-8 opacity-45" />
+                                      <span>No Image Set</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Gallery Preview Thumbnails */}
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[10px] font-bold text-[#8c92a4] uppercase tracking-wider">
+                                Gallery Previews
+                              </label>
+                              <div className="glass-panel border border-[#272c3f]/40 p-4 rounded-xl flex flex-wrap gap-3.5 min-h-[90px] bg-[#151823]/20">
+                                {p.gallery_urls.split("|").filter(Boolean).length > 0 ? (
+                                  p.gallery_urls.split("|").filter(Boolean).map((url, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="w-16 h-16 rounded-lg border border-[#272c3f] bg-white/5 overflow-hidden flex items-center justify-center p-1 hover:border-[#01b3fd]/50 transition-colors relative group"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={url}
+                                        alt={`Gallery ${idx + 1}`}
+                                        className="max-w-full max-h-full object-contain rounded"
+                                      />
+                                      <div className="absolute inset-0 bg-[#000]/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                        <button
+                                          onClick={() => {
+                                            const urls = p.gallery_urls.split("|").filter(Boolean);
+                                            const updated = urls.filter((_, uidx) => uidx !== idx).join("|");
+                                            updateModalPayload(selectedItem.id, "gallery_urls", updated);
+                                          }}
+                                          disabled={isExcluded}
+                                          className="text-[#ef4444] hover:text-red-400 p-1 cursor-pointer"
+                                          title="Remove from gallery"
+                                        >
+                                          <X className="h-3.5 w-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <span className="text-[11px] text-[#8c92a4] italic my-auto">
+                                    No gallery images. Paste links on new lines inside the text area above.
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TAB 4: SPECIFICATIONS */}
+                        {activeEditTab === "specs" && (
+                          <div className="flex flex-col gap-4 max-w-4xl">
+                            <div className="flex justify-between items-center bg-[#151823]/60 border border-[#272c3f]/50 px-4 py-3 rounded-xl">
+                              <div>
+                                <span className="text-xs font-bold text-[#e8eaf0] uppercase tracking-wider block">
+                                  Technical Details Table
+                                </span>
+                                <span className="text-[11px] text-[#8c92a4]">
+                                  Configure key specifications that map directly into WooCommerce / Supabase spec grids.
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => handleModalAddSpec(selectedItem.id)}
+                                disabled={isExcluded}
+                                className="bg-[#01b3fd]/10 hover:bg-[#01b3fd]/20 text-[#01b3fd] border border-[#01b3fd]/35 text-[11px] px-3.5 py-1.5 rounded-lg flex items-center gap-1 font-bold disabled:opacity-50 cursor-pointer transition-colors"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                                <span>Add Specification</span>
+                              </button>
+                            </div>
+
+                            <div className="flex flex-col gap-2 max-h-[350px] overflow-y-auto pr-1">
+                              {p._specs && p._specs.length > 0 ? (
+                                p._specs.map((spec, sIdx) => (
+                                  <div
+                                    key={sIdx}
+                                    className="flex gap-3 items-center bg-[#1c2030]/20 hover:bg-[#1c2030]/40 p-2 border border-[#272c3f]/30 rounded-lg"
+                                  >
+                                    <input
+                                      type="text"
+                                      value={spec.name}
+                                      onChange={e => handleModalSpecChange(selectedItem.id, sIdx, "name", e.target.value)}
+                                      placeholder="Specification Key (e.g. Resolution)"
+                                      disabled={isExcluded}
+                                      className="w-1/3 bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-md px-3 py-1.5 focus:outline-none focus:border-[#01b3fd] font-semibold"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={spec.value}
+                                      onChange={e => handleModalSpecChange(selectedItem.id, sIdx, "value", e.target.value)}
+                                      placeholder="Specification Value (e.g. 4MP (2688 x 1520))"
+                                      disabled={isExcluded}
+                                      className="flex-1 bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-md px-3 py-1.5 focus:outline-none focus:border-[#01b3fd]"
+                                    />
+                                    <button
+                                      onClick={() => handleModalRemoveSpec(selectedItem.id, sIdx)}
+                                      disabled={isExcluded}
+                                      className="text-[#ef4444] hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 disabled:opacity-50 cursor-pointer transition-colors"
+                                      title="Delete Specification"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="text-center py-10 border border-dashed border-[#272c3f] rounded-xl flex flex-col items-center gap-1 text-[#8c92a4]">
+                                  <AlertOctagon className="h-6 w-6 opacity-30" />
+                                  <span className="text-xs italic">No technical specs defined yet. Click &quot;Add Specification&quot; to begin.</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </div>
 
-                      {/* Main grids */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Product Name</label>
-                          <input
-                            type="text"
-                            value={p.name}
-                            onChange={e => updateModalPayload(item.id, "name", e.target.value)}
-                            disabled={isExcluded}
-                            className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Brand</label>
-                          <input
-                            type="text"
-                            value={p.brand}
-                            onChange={e => updateModalPayload(item.id, "brand", e.target.value)}
-                            disabled={isExcluded}
-                            className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Category</label>
-                          <input
-                            type="text"
-                            value={p.category}
-                            onChange={e => updateModalPayload(item.id, "category", e.target.value)}
-                            disabled={isExcluded}
-                            className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Subcategory</label>
-                          <input
-                            type="text"
-                            value={p.subcategory}
-                            onChange={e => updateModalPayload(item.id, "subcategory", e.target.value)}
-                            disabled={isExcluded}
-                            className="bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
-                          />
-                        </div>
-
-                        {/* Details grid inline */}
-                        <div className="md:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-3 my-1">
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Warranty</label>
-                            <input
-                              type="text"
-                              value={p.warranty}
-                              onChange={e => updateModalPayload(item.id, "warranty", e.target.value)}
-                              disabled={isExcluded}
-                              className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded px-2 py-1 focus:outline-none disabled:opacity-50"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Shipping</label>
-                            <input
-                              type="text"
-                              value={p.shipping_class}
-                              onChange={e => updateModalPayload(item.id, "shipping_class", e.target.value)}
-                              disabled={isExcluded}
-                              className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded px-2 py-1 focus:outline-none disabled:opacity-50"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Cost Excl</label>
-                            <input
-                              type="number"
-                              value={p.cost_price_excl_vat}
-                              onChange={e => {
-                                const costVal = parseFloat(e.target.value) || 0;
-                                const pricing = calculatePricing(costVal, markup);
-                                updateModalPayload(item.id, "cost_price_excl_vat", costVal);
-                                updateModalPayload(item.id, "price_excl_vat", pricing.sellExcl);
-                              }}
-                              disabled={isExcluded}
-                              className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded px-2 py-1 focus:outline-none disabled:opacity-50 font-mono"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Selling Excl</label>
-                            <input
-                              type="number"
-                              value={p.price_excl_vat}
-                              onChange={e => updateModalPayload(item.id, "price_excl_vat", parseFloat(e.target.value) || 0)}
-                              disabled={isExcluded}
-                              className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded px-2 py-1 focus:outline-none disabled:opacity-50 font-mono"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Short Description */}
-                        <div className="md:col-span-2 flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Short Description</label>
-                          <input
-                            type="text"
-                            value={p.short_description}
-                            onChange={e => updateModalPayload(item.id, "short_description", e.target.value)}
-                            disabled={isExcluded}
-                            className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
-                          />
-                        </div>
-
-                        {/* Main Image URL */}
-                        <div className="md:col-span-2 flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Main Image URL</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={p.image_url}
-                              onChange={e => updateModalPayload(item.id, "image_url", e.target.value)}
-                              disabled={isExcluded}
-                              className="flex-1 bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50"
-                              placeholder="Paste main image URL..."
-                            />
-                            {p.image_url && (
-                              <div className="w-8 h-8 rounded border border-[#272c3f] overflow-hidden shrink-0 bg-white/5 flex items-center justify-center">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={p.image_url} alt="thumbnail" className="max-w-full max-h-full object-contain" />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Gallery URLs */}
-                        <div className="md:col-span-2 flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-[#8c92a4] uppercase">Gallery URLs (one per line)</label>
-                          <textarea
-                            rows={2}
-                            value={p.gallery_urls.replace(/\|/g, "\n")}
-                            onChange={e => updateModalPayload(item.id, "gallery_urls", e.target.value.split("\n").filter(Boolean).join("|"))}
-                            disabled={isExcluded}
-                            className="bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded-lg p-2 focus:outline-none focus:border-[#01b3fd] resize-none disabled:opacity-50"
-                            placeholder="Paste gallery image URLs..."
-                          />
-                        </div>
-
-                        {/* Specs grid */}
-                        <div className="md:col-span-2 border border-[#272c3f]/50 rounded-lg p-3 bg-[#151823]/30">
-                          <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px] font-bold text-[#8c92a4] uppercase">Specifications</span>
-                            <button
-                              onClick={() => handleModalAddSpec(item.id)}
-                              disabled={isExcluded}
-                              className="text-[10px] text-[#01b3fd] hover:text-[#1ac0ff] flex items-center gap-1 font-semibold disabled:opacity-50 cursor-pointer"
-                            >
-                              <Plus className="h-3 w-3" />
-                              <span>Add Spec</span>
-                            </button>
-                          </div>
-                          <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
-                            {p._specs && p._specs.length > 0 ? (
-                              p._specs.map((spec, sIdx) => (
-                                <div key={sIdx} className="flex gap-2 items-center">
-                                  <input
-                                    type="text"
-                                    value={spec.name}
-                                    onChange={e => handleModalSpecChange(item.id, sIdx, "name", e.target.value)}
-                                    placeholder="Name"
-                                    disabled={isExcluded}
-                                    className="w-1/3 bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded px-2 py-1 focus:outline-none"
-                                  />
-                                  <input
-                                    type="text"
-                                    value={spec.value}
-                                    onChange={e => handleModalSpecChange(item.id, sIdx, "value", e.target.value)}
-                                    placeholder="Value"
-                                    disabled={isExcluded}
-                                    className="flex-1 bg-[#151823] text-xs text-[#e8eaf0] border border-[#272c3f] rounded px-2 py-1 focus:outline-none"
-                                  />
-                                  <button
-                                    onClick={() => handleModalRemoveSpec(item.id, sIdx)}
-                                    disabled={isExcluded}
-                                    className="text-[#ef4444] hover:text-red-400 p-1 rounded hover:bg-red-500/10 disabled:opacity-50 cursor-pointer"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              ))
-                            ) : (
-                              <span className="text-[11px] text-[#8c92a4] italic text-center py-2">No specs defined.</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Search tools links */}
-                        <div className="md:col-span-2 flex flex-wrap gap-4 mt-2">
+                      {/* Footer bar of Editor Panel */}
+                      <div className="bg-[#151823]/80 px-6 py-4 border-t border-[#272c3f] flex items-center justify-between shrink-0">
+                        {/* Search tools / competitor check links */}
+                        <div className="flex flex-wrap gap-4">
                           <a
-                            href={getImageSearchUrl(`${p.brand} ${p.name} ${p.sku} product photo`)}
+                            href={getImageSearchUrl(`${p.brand || ""} ${p.name || ""} ${p.sku || ""} product photo`)}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-xs text-[#01b3fd] hover:underline flex items-center gap-1"
+                            className="text-xs text-[#01b3fd] hover:text-[#1ac0ff] hover:underline flex items-center gap-1 bg-[#01b3fd]/5 border border-[#01b3fd]/15 px-3 py-1.5 rounded-lg font-semibold transition-colors"
                           >
                             <ImageIcon className="h-3.5 w-3.5" />
-                            <span>Find images on Google</span>
+                            <span>Verify Logo / Image on Google</span>
                             <ExternalLink className="h-3 w-3" />
                           </a>
 
                           <a
-                            href={getCompetitorSearchUrl(p.name, p.sku)}
+                            href={getCompetitorSearchUrl(p.name || "", p.sku || "")}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-xs text-[#f5a623] hover:underline flex items-center gap-1"
+                            className="text-xs text-[#f5a623] hover:text-[#ffb636] hover:underline flex items-center gap-1 bg-[#f5a623]/5 border border-[#f5a623]/15 px-3 py-1.5 rounded-lg font-semibold transition-colors"
                           >
                             <DollarSign className="h-3.5 w-3.5" />
-                            <span>Compare Pricing</span>
+                            <span>Compare Supplier Price</span>
                             <ExternalLink className="h-3 w-3" />
                           </a>
+                        </div>
+
+                        {/* Navigation button panel */}
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-[#8c92a4] font-mono mr-2">
+                            Product {currentItemIndex + 1} of {filteredReviewedItems.length}
+                          </span>
+
+                          <button
+                            onClick={() => {
+                              if (currentItemIndex > 0) {
+                                setSelectedReviewItemId(filteredReviewedItems[currentItemIndex - 1].id);
+                              }
+                            }}
+                            disabled={currentItemIndex <= 0}
+                            className="bg-[#272c3f] hover:bg-[#21253a] border border-[#272c3f] text-[#e8eaf0] disabled:bg-[#1c2030] disabled:text-[#8c92a4]/40 disabled:border-[#272c3f]/50 p-2 rounded-lg cursor-pointer transition-colors"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              if (currentItemIndex !== -1 && currentItemIndex < filteredReviewedItems.length - 1) {
+                                setSelectedReviewItemId(filteredReviewedItems[currentItemIndex + 1].id);
+                              }
+                            }}
+                            disabled={currentItemIndex === -1 || currentItemIndex === filteredReviewedItems.length - 1}
+                            className="bg-[#272c3f] hover:bg-[#21253a] border border-[#272c3f] text-[#e8eaf0] disabled:bg-[#1c2030] disabled:text-[#8c92a4]/40 disabled:border-[#272c3f]/50 p-2 rounded-lg cursor-pointer transition-colors"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-            </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-10 text-center gap-2">
+                      <FileSpreadsheet className="h-10 w-10 text-[#8c92a4] opacity-35" />
+                      <span className="text-sm font-bold text-[#e8eaf0]">No Product Selected</span>
+                      <span className="text-xs text-[#8c92a4] max-w-xs">
+                        Select a researched item from the sidebar queue to inspect and edit its catalog specifications.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-            {/* Modal Footer */}
-            <div className="bg-[#151823] px-6 py-4 border-t border-[#272c3f] flex justify-end">
-              <button
-                onClick={() => setIsReviewing(false)}
-                className="bg-[#10b981] hover:bg-[#059669] text-white text-sm font-bold px-6 py-2 rounded-lg cursor-pointer transition-colors"
-              >
-                Done - Apply Changes
-              </button>
+              {/* Modal footer overall */}
+              <div className="bg-[#151823] px-6 py-4 border-t border-[#272c3f] flex justify-end gap-3 shrink-0">
+                <button
+                  onClick={() => {
+                    setIsReviewing(false);
+                    setSearchQuery("");
+                  }}
+                  className="bg-[#10b981] hover:bg-[#059669] text-white text-xs font-bold px-6 py-2.5 rounded-lg cursor-pointer transition-colors shadow-lg shadow-emerald-500/10 flex items-center gap-1.5"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>Done - Save & Exit Review</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

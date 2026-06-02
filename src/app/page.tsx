@@ -88,8 +88,13 @@ export default function Home() {
       {/* HEADER BAR */}
       <header className="bg-[#151823] border-b border-[#272c3f] px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 shrink-0 shadow-lg shadow-black/10">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#01b3fd] to-[#f5a623] flex items-center justify-center shadow-lg shadow-[#01b3fd]/10">
-            <Sparkles className="h-5 w-5 text-black" />
+          <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#1c2030] flex items-center justify-center border border-[#272c3f]/50 shadow-md">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/69ae58de07517f75e0d39cfd/4c7929b8c_Untitleddesign1.png"
+              alt="Mass10 Logo"
+              className="w-full h-full object-contain p-1"
+            />
           </div>
           <div className="flex flex-col">
             <h1 className="text-md font-bold tracking-tight text-[#e8eaf0] flex items-center gap-1.5">
