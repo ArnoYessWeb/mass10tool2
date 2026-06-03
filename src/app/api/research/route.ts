@@ -1,4 +1,13 @@
 import { NextResponse } from "next/server";
+import {
+  getAuthenticatedUser,
+  getAuthenticatedSettings,
+  resolveAnthropicApiKey,
+} from "@/lib/user-settings";
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  return error instanceof Error ? error.message : fallback;
+};
 
 const SYSTEM_PROMPT = `You are a product researcher for Mass10, a South African IT, CCTV, and Audio/Visual store in Welkom.
 Return ONLY valid JSON — no markdown, no code fences, no preamble.`;
@@ -52,14 +61,26 @@ export async function POST(req: Request) {
       );
     }
 
-    // Determine which API key to use:
-    // First, check for client-supplied API key in headers, then check server environment variables.
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      return NextResponse.json(
+        { error: "Please log in before using product research." },
+        { status: 401 }
+      );
+    }
+
     const clientKey = req.headers.get("x-anthropic-api-key");
-    const apiKey = clientKey || process.env.ANTHROPIC_API_KEY;
+    let account: Awaited<ReturnType<typeof getAuthenticatedSettings>> = null;
+    try {
+      account = await getAuthenticatedSettings();
+    } catch (settingsError) {
+      console.warn("Could not load account Claude key:", settingsError);
+    }
+    const apiKey = resolveAnthropicApiKey(clientKey, account?.settings);
 
     if (!apiKey || apiKey === "your_anthropic_api_key_here") {
       return NextResponse.json(
-        { error: "Anthropic API key is not configured. Please add it to your settings or server environment." },
+        { error: "Claude API key is not configured. Log in and add it to Settings, or add it to local Settings/server environment." },
         { status: 401 }
       );
     }
@@ -85,7 +106,9 @@ export async function POST(req: Request) {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      const errorData = await response.json().catch(() => ({})) as {
+        error?: { message?: string };
+      };
       const errorMessage = errorData?.error?.message || `Anthropic API returned status ${response.status}`;
       return NextResponse.json({ error: errorMessage }, { status: response.status });
     }
@@ -99,17 +122,17 @@ export async function POST(req: Request) {
     try {
       const parsedData = JSON.parse(text);
       return NextResponse.json(parsedData);
-    } catch (parseError) {
+    } catch {
       console.error("Failed to parse JSON response from Claude:", text);
       return NextResponse.json(
         { error: "AI returned invalid JSON. Please try again.", rawResponse: text },
         { status: 500 }
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error in research API route:", error);
     return NextResponse.json(
-      { error: error?.message || "Internal server error" },
+      { error: getErrorMessage(error, "Internal server error") },
       { status: 500 }
     );
   }

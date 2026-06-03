@@ -263,6 +263,19 @@ export default function BatchResearch({
     addToast("Sample CSV template downloaded.", "info");
   };
 
+  const handleDownloadTemplate = () => {
+    const headers = ["sku", "short_description", "cost_excl_vat"];
+    const csvContent = "\uFEFF" + headers.join(",") + "\n";
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "mass10_batch_import_template.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    addToast("Blank CSV import template downloaded.", "info");
+  };
+
   // Batch Research Loop
   const startResearch = async () => {
     if (queue.length === 0) {
@@ -625,6 +638,14 @@ export default function BatchResearch({
           >
             <Download className="h-3.5 w-3.5" />
             <span>Sample CSV</span>
+          </button>
+
+          <button
+            onClick={handleDownloadTemplate}
+            className="bg-[#1c2030] hover:bg-[#272c3f] border border-[#272c3f] text-[#8c92a4] text-xs font-semibold px-3.5 py-2.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            <span>Blank Template</span>
           </button>
 
           <div className="w-px h-6 bg-[#272c3f] mx-2 hidden sm:block"></div>

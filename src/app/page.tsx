@@ -1,27 +1,43 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Settings,
   Sparkles,
   Layers,
   Database,
   Key,
+  LogIn,
+  LogOut,
+  Mail,
   Save,
   X,
-  FileSpreadsheet,
   AlertCircle,
   CheckCircle2,
-  Info
+  Info,
+  UserCircle,
+  UserPlus
 } from "lucide-react";
 import SingleResearch from "@/components/SingleResearch";
 import BatchResearch from "@/components/BatchResearch";
+import { createClient } from "@/utils/supabase/client";
 
 interface Toast {
   id: string;
   message: string;
   type: "success" | "error" | "info";
 }
+
+interface AccountSettings {
+  supabaseProjectUrl: string;
+  supabaseTable: string;
+  hasSupabaseApiKey: boolean;
+  hasAnthropicApiKey: boolean;
+}
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  return error instanceof Error ? error.message : fallback;
+};
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
@@ -34,35 +50,225 @@ export default function Home() {
   const [supabaseUrl, setSupabaseUrl] = useState<string>("");
   const [supabaseKey, setSupabaseKey] = useState<string>("");
   const [supabaseTable, setSupabaseTable] = useState<string>("products");
+  const [accountEmail, setAccountEmail] = useState<string>("");
+  const [authEmail, setAuthEmail] = useState<string>("");
+  const [authPassword, setAuthPassword] = useState<string>("");
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [accountSettings, setAccountSettings] = useState<AccountSettings | null>(null);
+  const [isAccountAdmin, setIsAccountAdmin] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
 
-  // Load settings from localStorage on mount (prevents hydration mismatch)
-  useEffect(() => {
-    setMarkup(parseInt(localStorage.getItem("mass10_markup") || "10") || 10);
-    setSupplier(localStorage.getItem("mass10_supplier") || "");
-    setAnthropicApiKey(localStorage.getItem("mass10_anthropic_key") || "");
-    setSupabaseUrl(localStorage.getItem("mass10_supabase_url") || "");
-    setSupabaseKey(localStorage.getItem("mass10_supabase_key") || "");
-    setSupabaseTable(localStorage.getItem("mass10_supabase_table") || "products");
+  const hasSupabaseAuthConfig =
+    !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    !!(
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    );
+
+  // Toast Management
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const addToast = useCallback((message: string, type: "success" | "error" | "info") => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts(prev => [...prev, { id, message, type }]);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setMarkup(parseInt(localStorage.getItem("mass10_markup") || "10") || 10);
+      setSupplier(localStorage.getItem("mass10_supplier") || "");
+      setAnthropicApiKey(localStorage.getItem("mass10_anthropic_key") || "");
+      setSupabaseUrl(localStorage.getItem("mass10_supabase_url") || "");
+      setSupabaseKey(localStorage.getItem("mass10_supabase_key") || "");
+      setSupabaseTable(localStorage.getItem("mass10_supabase_table") || "products");
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const loadAccountSettings = async () => {
+    const response = await fetch("/api/settings");
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Could not load account settings.");
+    }
+
+    if (!data.user) {
+      setAccountEmail("");
+      setAccountSettings(null);
+      setIsAccountAdmin(false);
+      return;
+    }
+
+    setAccountEmail(data.user.email || "");
+    setIsAccountAdmin(!!data.user.isAdmin);
+    setAccountSettings(data.settings || null);
+
+    if (data.settings?.supabaseProjectUrl) {
+      setSupabaseUrl(data.settings.supabaseProjectUrl);
+    }
+    if (data.settings?.supabaseTable) {
+      setSupabaseTable(data.settings.supabaseTable);
+    }
+  };
+
+  useEffect(() => {
+    if (!hasSupabaseAuthConfig) {
+      window.setTimeout(() => setIsAuthChecking(false), 0);
+      return;
+    }
+
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data }) => {
+      const email = data.session?.user.email || "";
+      setAccountEmail(email);
+      if (email) {
+        loadAccountSettings().catch((err) => {
+          addToast(getErrorMessage(err, "Could not load account settings."), "error");
+        }).finally(() => setIsAuthChecking(false));
+      } else {
+        setIsAuthChecking(false);
+      }
+    }).catch(() => setIsAuthChecking(false));
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const email = session?.user.email || "";
+      setAccountEmail(email);
+      if (email) {
+        loadAccountSettings().catch((err) => {
+          addToast(getErrorMessage(err, "Could not load account settings."), "error");
+        });
+      } else {
+        setAccountSettings(null);
+        setIsAccountAdmin(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [addToast, hasSupabaseAuthConfig]);
+
   // Save settings helpers
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     localStorage.setItem("mass10_markup", String(markup));
     localStorage.setItem("mass10_supplier", supplier);
     localStorage.setItem("mass10_anthropic_key", anthropicApiKey);
     localStorage.setItem("mass10_supabase_url", supabaseUrl);
     localStorage.setItem("mass10_supabase_key", supabaseKey);
     localStorage.setItem("mass10_supabase_table", supabaseTable);
+
+    if (accountEmail) {
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          supabaseProjectUrl: supabaseUrl,
+          supabaseApiKey: supabaseKey,
+          supabaseTable,
+          anthropicApiKey,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        addToast(data.error || "Local settings saved, but account sync failed.", "error");
+        return;
+      }
+
+      await loadAccountSettings();
+    }
     
     setShowSettings(false);
-    addToast("Settings successfully saved!", "success");
+    addToast(accountEmail ? "Settings saved to this browser and your account." : "Settings successfully saved!", "success");
   };
 
-  // Toast Management
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const addToast = (message: string, type: "success" | "error" | "info") => {
-    const id = `${Date.now()}-${Math.random()}`;
-    setToasts(prev => [...prev, { id, message, type }]);
+  const handleAuthSubmit = async () => {
+    if (!hasSupabaseAuthConfig) {
+      addToast("Supabase auth is not configured for this deployment.", "error");
+      return;
+    }
+    if (!authEmail.trim() || !authPassword.trim()) {
+      addToast("Enter your email and password first.", "error");
+      return;
+    }
+
+    setIsAuthLoading(true);
+    try {
+      const supabase = createClient();
+      const result = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
+
+      if (result.error) {
+        throw result.error;
+      }
+
+      setAuthPassword("");
+      setAccountEmail(result.data.user?.email || authEmail.trim());
+      await loadAccountSettings();
+      addToast("Logged in. Account settings loaded.", "success");
+    } catch (err: unknown) {
+      addToast(getErrorMessage(err, "Authentication failed."), "error");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (!hasSupabaseAuthConfig) return;
+    setIsAuthLoading(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setAccountEmail("");
+      setAccountSettings(null);
+      setIsAccountAdmin(false);
+      addToast("Logged out. Local settings are still available.", "info");
+    } catch (err: unknown) {
+      addToast(getErrorMessage(err, "Could not log out."), "error");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleCreateUser = async () => {
+    if (!newUserEmail.trim() || !newUserPassword.trim()) {
+      addToast("Enter the new user's email and password.", "error");
+      return;
+    }
+
+    setIsCreatingUser(true);
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: newUserEmail,
+          password: newUserPassword,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Could not create user.");
+      }
+
+      setNewUserEmail("");
+      setNewUserPassword("");
+      addToast(data.message || "User created and emailed.", data.email?.sent ? "success" : "info");
+    } catch (err: unknown) {
+      addToast(getErrorMessage(err, "Could not create user."), "error");
+    } finally {
+      setIsCreatingUser(false);
+    }
   };
 
   const removeToast = (id: string) => {
@@ -80,8 +286,101 @@ export default function Home() {
   }, [toasts]);
 
   // Credentials configured status checkers
-  const isApiKeyConfigured = !!anthropicApiKey.trim();
-  const isSupabaseConfigured = !!supabaseUrl.trim() && !!supabaseKey.trim();
+  const isApiKeyConfigured =
+    !!anthropicApiKey.trim() || !!accountSettings?.hasAnthropicApiKey;
+  const isSupabaseConfigured =
+    !!supabaseUrl.trim() &&
+    (!!supabaseKey.trim() || !!accountSettings?.hasSupabaseApiKey);
+
+  const toastContainer = (
+    <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-50 pointer-events-none max-w-sm w-full">
+      {toasts.map(toast => (
+        <div
+          key={toast.id}
+          onClick={() => removeToast(toast.id)}
+          className={`glass-panel border rounded-xl p-4 flex gap-3 shadow-lg pointer-events-auto cursor-pointer animate-fadeIn w-full ${
+            toast.type === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-[#10b981]"
+              : toast.type === "error"
+              ? "border-red-500/30 bg-red-500/10 text-[#ef4444]"
+              : "border-[#01b3fd]/30 bg-[#01b3fd]/10 text-[#01b3fd]"
+          }`}
+        >
+          {toast.type === "success" && <CheckCircle2 className="h-5 w-5 shrink-0" />}
+          {toast.type === "error" && <AlertCircle className="h-5 w-5 shrink-0" />}
+          {toast.type === "info" && <Info className="h-5 w-5 shrink-0" />}
+          <span className="text-xs font-medium text-[#e8eaf0]">{toast.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  if (!accountEmail) {
+    return (
+      <div className="min-h-screen bg-[#0b0d13] flex items-center justify-center p-6">
+        <div className="w-full max-w-md glass-panel rounded-2xl overflow-hidden shadow-2xl shadow-black/40">
+          <div className="bg-[#151823] px-6 py-5 border-b border-[#272c3f] flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl overflow-hidden bg-[#1c2030] flex items-center justify-center border border-[#272c3f]/50 shadow-md">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/69ae58de07517f75e0d39cfd/4c7929b8c_Untitleddesign1.png"
+                alt="Mass10 Logo"
+                className="w-full h-full object-contain p-1"
+              />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-base font-bold text-[#e8eaf0]">Mass10 Research Portal</h1>
+              <span className="text-[11px] text-[#8c92a4]">Secure staff login required</span>
+            </div>
+          </div>
+
+          <div className="p-6 flex flex-col gap-4">
+            <div className="bg-[#01b3fd]/5 border border-[#01b3fd]/20 rounded-xl p-3.5 flex gap-2 text-xs text-[#8c92a4]">
+              <Info className="h-4 w-4 text-[#01b3fd] shrink-0" />
+              <span>Sign in with the account created by the Mass10 admin to access research and catalog sync tools.</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#8c92a4]">Email</label>
+              <input
+                type="email"
+                placeholder="you@company.co.za"
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+                disabled={isAuthChecking}
+                className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors disabled:opacity-60"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#8c92a4]">Password</label>
+              <input
+                type="password"
+                placeholder="Password"
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") handleAuthSubmit();
+                }}
+                disabled={isAuthChecking}
+                className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors disabled:opacity-60"
+              />
+            </div>
+
+            <button
+              onClick={handleAuthSubmit}
+              disabled={isAuthLoading || isAuthChecking}
+              className="bg-[#01b3fd] hover:bg-[#1ac0ff] disabled:opacity-60 text-black text-sm font-bold px-5 py-2.5 rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <LogIn className="h-4 w-4" />
+              <span>{isAuthChecking ? "Checking session..." : isAuthLoading ? "Logging in..." : "Login"}</span>
+            </button>
+          </div>
+        </div>
+        {toastContainer}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col flex-1 min-h-screen bg-[#0b0d13]">
@@ -150,8 +449,14 @@ export default function Home() {
           {/* Credentials Indicators */}
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-[11px] font-semibold">
+              <span className={`w-2 h-2 rounded-full ${accountEmail ? "bg-[#10b981]" : "bg-[#8c92a4]"}`}></span>
+              <span className={accountEmail ? "text-[#8c92a4]" : "text-[#ef4444]"}>
+                {accountEmail ? "Logged In" : "Logged Out"}
+              </span>
+            </span>
+            <span className="flex items-center gap-1 text-[11px] font-semibold">
               <span className={`w-2 h-2 rounded-full ${isApiKeyConfigured ? "bg-[#10b981]" : "bg-[#ef4444]"}`}></span>
-              <span className={isApiKeyConfigured ? "text-[#8c92a4]" : "text-[#ef4444]"}>API Key</span>
+              <span className={isApiKeyConfigured ? "text-[#8c92a4]" : "text-[#ef4444]"}>Claude</span>
             </span>
             <span className="flex items-center gap-1 text-[11px] font-semibold">
               <span className={`w-2 h-2 rounded-full ${isSupabaseConfigured ? "bg-[#10b981]" : "bg-[#ef4444]"}`}></span>
@@ -243,18 +548,124 @@ export default function Home() {
             <div className="p-6 flex flex-col gap-4">
               <div className="bg-[#10b981]/5 border border-[#10b981]/25 rounded-xl p-3.5 flex gap-2 text-xs text-[#8c92a4]">
                 <Info className="h-4 w-4 text-[#10b981] shrink-0" />
-                <span>Credentials entered below will be stored securely inside your browser&apos;s LocalStorage. They do not get saved to any server and remain 100% private to you.</span>
+                <span>
+                  Log in to load saved Supabase credentials. New accounts can only be created by an approved admin through this backend.
+                </span>
               </div>
+
+              <div className="bg-[#1c2030] border border-[#272c3f] rounded-xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <UserCircle className="h-4 w-4 text-[#01b3fd] shrink-0" />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-bold text-[#e8eaf0]">
+                        Account Login
+                      </span>
+                      <span className="text-[11px] text-[#8c92a4] truncate">
+                        {accountEmail || "Use your assigned Mass10 account"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {accountEmail && (
+                    <button
+                      onClick={handleSignOut}
+                      disabled={isAuthLoading}
+                      className="bg-[#272c3f] hover:bg-[#21253a] disabled:opacity-60 text-[#e8eaf0] text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      <span>Log Out</span>
+                    </button>
+                  )}
+                </div>
+
+                {!accountEmail && (
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={authEmail}
+                      onChange={e => setAuthEmail(e.target.value)}
+                      className="bg-[#151823] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
+                    />
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      value={authPassword}
+                      onChange={e => setAuthPassword(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") handleAuthSubmit();
+                      }}
+                      className="bg-[#151823] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
+                    />
+                    <button
+                      onClick={handleAuthSubmit}
+                      disabled={isAuthLoading}
+                      className="bg-[#01b3fd] hover:bg-[#1ac0ff] disabled:opacity-60 text-black text-xs font-bold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <LogIn className="h-3.5 w-3.5" />
+                      <span>{isAuthLoading ? "Working..." : "Login"}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {isAccountAdmin && (
+                <div className="bg-[#01b3fd]/5 border border-[#01b3fd]/20 rounded-xl p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="h-4 w-4 text-[#01b3fd]" />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-[#e8eaf0]">
+                        Admin User Creation
+                      </span>
+                      <span className="text-[11px] text-[#8c92a4]">
+                        Creates a confirmed Supabase user and sends the access email via Resend.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                    <input
+                      type="email"
+                      placeholder="New user email"
+                      value={newUserEmail}
+                      onChange={e => setNewUserEmail(e.target.value)}
+                      className="bg-[#151823] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
+                    />
+                    <input
+                      type="password"
+                      placeholder="Temporary password"
+                      value={newUserPassword}
+                      onChange={e => setNewUserPassword(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") handleCreateUser();
+                      }}
+                      className="bg-[#151823] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
+                    />
+                    <button
+                      onClick={handleCreateUser}
+                      disabled={isCreatingUser}
+                      className="bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      <span>{isCreatingUser ? "Creating..." : "Create & Email"}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Anthropic field */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-[#8c92a4] flex items-center gap-1">
                   <Key className="h-3.5 w-3.5 text-[#01b3fd]" />
-                  <span>Anthropic API Key</span>
+                  <span>Claude API Key</span>
+                  {accountSettings?.hasAnthropicApiKey && !anthropicApiKey && (
+                    <span className="text-[#10b981]">(saved on account)</span>
+                  )}
                 </label>
                 <input
                   type="password"
-                  placeholder="Paste sk-ant-... API Key"
+                  placeholder={accountSettings?.hasAnthropicApiKey ? "Leave blank to keep saved Claude key" : "Paste sk-ant-... API key"}
                   value={anthropicApiKey}
                   onChange={e => setAnthropicApiKey(e.target.value)}
                   className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
@@ -281,10 +692,13 @@ export default function Home() {
                 <label className="text-xs font-semibold text-[#8c92a4] flex items-center gap-1">
                   <Key className="h-3.5 w-3.5 text-[#f5a623]" />
                   <span>Supabase API Key (Anon or Service Role)</span>
+                  {accountSettings?.hasSupabaseApiKey && !supabaseKey && (
+                    <span className="text-[#10b981]">(saved on account)</span>
+                  )}
                 </label>
                 <input
                   type="password"
-                  placeholder="Paste Supabase API secret key"
+                  placeholder={accountSettings?.hasSupabaseApiKey ? "Leave blank to keep saved Supabase key" : "Paste Supabase API secret key"}
                   value={supabaseKey}
                   onChange={e => setSupabaseKey(e.target.value)}
                   className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
@@ -327,27 +741,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* TOAST SYSTEM CONTAINER */}
-      <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-50 pointer-events-none max-w-sm w-full">
-        {toasts.map(toast => (
-          <div
-            key={toast.id}
-            onClick={() => removeToast(toast.id)}
-            className={`glass-panel border rounded-xl p-4 flex gap-3 shadow-lg pointer-events-auto cursor-pointer animate-fadeIn w-full ${
-              toast.type === "success"
-                ? "border-emerald-500/30 bg-emerald-500/10 text-[#10b981]"
-                : toast.type === "error"
-                ? "border-red-500/30 bg-red-500/10 text-[#ef4444]"
-                : "border-[#01b3fd]/30 bg-[#01b3fd]/10 text-[#01b3fd]"
-            }`}
-          >
-            {toast.type === "success" && <CheckCircle2 className="h-5 w-5 shrink-0" />}
-            {toast.type === "error" && <AlertCircle className="h-5 w-5 shrink-0" />}
-            {toast.type === "info" && <Info className="h-5 w-5 shrink-0" />}
-            <span className="text-xs font-medium text-[#e8eaf0]">{toast.message}</span>
-          </div>
-        ))}
-      </div>
+      {toastContainer}
     </div>
   );
 }
