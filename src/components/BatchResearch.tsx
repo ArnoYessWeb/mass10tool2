@@ -282,10 +282,14 @@ export default function BatchResearch({
       addToast("Queue is empty. Import a CSV first.", "error");
       return;
     }
+    if (!supplier.trim()) {
+      addToast("Add the batch provider in the top bar before starting research.", "error");
+      return;
+    }
 
     setIsRunning(true);
     isRunningRef.current = true;
-    addToast("Batch research started...", "info");
+    addToast(`Batch research started for provider ${supplier.trim()}...`, "info");
 
     const items = [...queue];
 
@@ -626,6 +630,17 @@ export default function BatchResearch({
       {/* BUTTONS BAR */}
       <div className="glass-panel rounded-2xl p-5 flex flex-wrap gap-4 items-center justify-between">
         <div className="flex flex-wrap gap-3 items-center">
+          <div className={`border rounded-lg px-3.5 py-2.5 flex items-center gap-2 ${
+            supplier.trim()
+              ? "bg-[#10b981]/10 border-[#10b981]/25 text-[#10b981]"
+              : "bg-[#ef4444]/10 border-[#ef4444]/25 text-[#ef4444]"
+          }`}>
+            <CloudLightning className="h-3.5 w-3.5" />
+            <span className="text-xs font-bold">
+              Provider: {supplier.trim() || "Required"}
+            </span>
+          </div>
+
           <label className="bg-[#272c3f] hover:bg-[#21253a] border border-[#272c3f] text-[#e8eaf0] text-sm font-bold px-4 py-2.5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors">
             <Upload className="h-4 w-4 text-[#01b3fd]" />
             <span>Import CSV</span>
@@ -661,7 +676,7 @@ export default function BatchResearch({
           ) : (
             <button
               onClick={startResearch}
-              disabled={queue.length === 0}
+              disabled={queue.length === 0 || !supplier.trim()}
               className="bg-[#01b3fd] hover:bg-[#1ac0ff] disabled:bg-[#1c2030] disabled:text-[#8c92a4] text-black text-sm font-bold px-5 py-2.5 rounded-lg flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-[#01b3fd]/5"
             >
               <Play className="h-4 w-4 fill-black" />
@@ -756,7 +771,7 @@ export default function BatchResearch({
             Product Queue
           </h3>
           <span className="text-xs text-[#8c92a4] font-semibold italic">
-            CSV schema: sku | short_description | cost_excl_vat
+            CSV schema: sku | short_description | cost_excl_vat. Provider comes from the top bar.
           </span>
         </div>
 

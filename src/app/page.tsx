@@ -39,6 +39,8 @@ const getErrorMessage = (error: unknown, fallback: string) => {
   return error instanceof Error ? error.message : fallback;
 };
 
+const DEFAULT_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
   const [showSettings, setShowSettings] = useState(false);
@@ -47,7 +49,7 @@ export default function Home() {
   const [markup, setMarkup] = useState<number>(10);
   const [supplier, setSupplier] = useState<string>("");
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>("");
-  const [supabaseUrl, setSupabaseUrl] = useState<string>("");
+  const [supabaseUrl, setSupabaseUrl] = useState<string>(DEFAULT_SUPABASE_URL);
   const [supabaseKey, setSupabaseKey] = useState<string>("");
   const [supabaseTable, setSupabaseTable] = useState<string>("products");
   const [accountEmail, setAccountEmail] = useState<string>("");
@@ -80,8 +82,8 @@ export default function Home() {
       setMarkup(parseInt(localStorage.getItem("mass10_markup") || "10") || 10);
       setSupplier(localStorage.getItem("mass10_supplier") || "");
       setAnthropicApiKey(localStorage.getItem("mass10_anthropic_key") || "");
-      setSupabaseUrl(localStorage.getItem("mass10_supabase_url") || "");
-      setSupabaseKey(localStorage.getItem("mass10_supabase_key") || "");
+      setSupabaseUrl(localStorage.getItem("mass10_supabase_url") || DEFAULT_SUPABASE_URL);
+      setSupabaseKey("");
       setSupabaseTable(localStorage.getItem("mass10_supabase_table") || "products");
     }, 0);
 
@@ -160,7 +162,7 @@ export default function Home() {
     localStorage.setItem("mass10_supplier", supplier);
     localStorage.setItem("mass10_anthropic_key", anthropicApiKey);
     localStorage.setItem("mass10_supabase_url", supabaseUrl);
-    localStorage.setItem("mass10_supabase_key", supabaseKey);
+    localStorage.removeItem("mass10_supabase_key");
     localStorage.setItem("mass10_supabase_table", supabaseTable);
 
     if (accountEmail) {
@@ -169,7 +171,6 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           supabaseProjectUrl: supabaseUrl,
-          supabaseApiKey: supabaseKey,
           supabaseTable,
           anthropicApiKey,
         }),
@@ -289,8 +290,7 @@ export default function Home() {
   const isApiKeyConfigured =
     !!anthropicApiKey.trim() || !!accountSettings?.hasAnthropicApiKey;
   const isSupabaseConfigured =
-    !!supabaseUrl.trim() &&
-    (!!supabaseKey.trim() || !!accountSettings?.hasSupabaseApiKey);
+    !!supabaseUrl.trim() && hasSupabaseAuthConfig;
 
   const toastContainer = (
     <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-50 pointer-events-none max-w-sm w-full">
@@ -432,15 +432,19 @@ export default function Home() {
             <span className="text-xs text-[#8c92a4]">%</span>
           </div>
 
-          {/* Supplier Name */}
-          <div className="flex items-center gap-2 bg-[#1c2030] px-3 py-1.5 rounded-lg border border-[#272c3f]">
-            <span className="text-xs text-[#8c92a4] font-semibold">Supplier:</span>
+          {/* Provider Name */}
+          <div className={`flex items-center gap-2 bg-[#1c2030] px-3 py-1.5 rounded-lg border ${
+            supplier.trim() ? "border-[#272c3f]" : "border-[#ef4444]/50"
+          }`}>
+            <span className={`text-xs font-semibold ${supplier.trim() ? "text-[#8c92a4]" : "text-[#ef4444]"}`}>
+              Provider *
+            </span>
             <input
               type="text"
               placeholder="e.g. Pinnacle"
               value={supplier}
               onChange={e => setSupplier(e.target.value)}
-              className="bg-transparent text-xs text-[#e8eaf0] font-semibold w-24 focus:outline-none"
+              className="bg-transparent text-xs text-[#e8eaf0] font-semibold w-28 focus:outline-none"
             />
           </div>
 
@@ -687,22 +691,15 @@ export default function Home() {
                 />
               </div>
 
-              {/* Supabase Key field */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#8c92a4] flex items-center gap-1">
-                  <Key className="h-3.5 w-3.5 text-[#f5a623]" />
-                  <span>Supabase API Key (Anon or Service Role)</span>
-                  {accountSettings?.hasSupabaseApiKey && !supabaseKey && (
-                    <span className="text-[#10b981]">(saved on account)</span>
-                  )}
-                </label>
-                <input
-                  type="password"
-                  placeholder={accountSettings?.hasSupabaseApiKey ? "Leave blank to keep saved Supabase key" : "Paste Supabase API secret key"}
-                  value={supabaseKey}
-                  onChange={e => setSupabaseKey(e.target.value)}
-                  className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
-                />
+              {/* Supabase Key status */}
+              <div className="bg-[#1c2030] border border-[#272c3f] rounded-lg px-3 py-2.5 flex items-center gap-2">
+                <Key className="h-3.5 w-3.5 text-[#10b981]" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-[#e8eaf0]">Supabase API Key</span>
+                  <span className="text-[11px] text-[#8c92a4]">
+                    Server-managed through Vercel environment variables.
+                  </span>
+                </div>
               </div>
 
               {/* Supabase Table name */}
