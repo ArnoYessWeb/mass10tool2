@@ -17,6 +17,18 @@ export interface AuthenticatedSettingsResult {
 
 export const USER_SETTINGS_TABLE = "mass10_user_settings";
 
+export function isMissingSettingsTableError(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  const message = error.message || "";
+  return (
+    error.code === "PGRST205" ||
+    error.code === "42P01" ||
+    message.includes(`'public.${USER_SETTINGS_TABLE}'`) ||
+    message.includes(`"${USER_SETTINGS_TABLE}"`) ||
+    message.includes("schema cache")
+  );
+}
+
 export function createSettingsAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -83,7 +95,11 @@ export async function getAuthenticatedSettings(): Promise<AuthenticatedSettingsR
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (error) {
+  if (isMissingSettingsTableError(error)) {
+    console.warn(
+      `Optional table "${USER_SETTINGS_TABLE}" is missing. Account settings will use server defaults.`
+    );
+  } else if (error) {
     throw new Error(
       `Could not load account settings from "${USER_SETTINGS_TABLE}": ${error.message}`
     );

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { createClient as createSupabaseServerClient } from "@/utils/supabase/server";
 import {
   createSettingsAdminClient,
+  isMissingSettingsTableError,
   USER_SETTINGS_TABLE,
 } from "@/lib/user-settings";
 import { isAllowedAdmin } from "@/lib/admin-auth";
@@ -57,6 +58,23 @@ export async function GET() {
       .select("supabase_project_url,supabase_table,supabase_api_key,anthropic_api_key")
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (isMissingSettingsTableError(error)) {
+      return NextResponse.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          isAdmin: isAllowedAdmin(user.email),
+        },
+        settings: {
+          supabaseProjectUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+          supabaseTable: "products",
+          hasSupabaseApiKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+          hasAnthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
+          settingsTableMissing: true,
+        },
+      });
+    }
 
     if (error) {
       return NextResponse.json(
@@ -117,6 +135,13 @@ export async function PUT(req: Request) {
     const { error } = await adminSupabase
       .from(USER_SETTINGS_TABLE)
       .upsert(payload, { onConflict: "user_id" });
+
+    if (isMissingSettingsTableError(error)) {
+      return NextResponse.json(
+        { error: `Account settings table "${USER_SETTINGS_TABLE}" has not been created in Supabase yet.` },
+        { status: 503 }
+      );
+    }
 
     if (error) {
       return NextResponse.json(
