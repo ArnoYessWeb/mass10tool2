@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
+import { parseFlexibleDecimal } from "@/lib/utils";
 import {
   getAuthenticatedUser,
   getAuthenticatedSettings,
@@ -18,8 +19,7 @@ const readString = (value: unknown, fallback = "") => {
 };
 
 const readNumber = (value: unknown, fallback = 0) => {
-  const parsed = parseFloat(readString(value));
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return parseFlexibleDecimal(value, fallback);
 };
 
 const readInteger = (value: unknown, fallback = 0) => {

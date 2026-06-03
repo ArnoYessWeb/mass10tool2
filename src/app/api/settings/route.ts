@@ -6,7 +6,6 @@ import {
   isMissingSettingsTableError,
   USER_SETTINGS_TABLE,
 } from "@/lib/user-settings";
-import { isAllowedAdmin } from "@/lib/admin-auth";
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   return error instanceof Error ? error.message : fallback;
@@ -64,7 +63,6 @@ export async function GET() {
         user: {
           id: user.id,
           email: user.email,
-          isAdmin: isAllowedAdmin(user.email),
         },
         settings: {
           supabaseProjectUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
@@ -87,7 +85,6 @@ export async function GET() {
       user: {
         id: user.id,
         email: user.email,
-        isAdmin: isAllowedAdmin(user.email),
       },
       settings: {
         supabaseProjectUrl: data?.supabase_project_url || "",

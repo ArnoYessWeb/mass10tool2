@@ -9,14 +9,12 @@ import {
   Key,
   LogIn,
   LogOut,
-  Mail,
   Save,
   X,
   AlertCircle,
   CheckCircle2,
   Info,
-  UserCircle,
-  UserPlus
+  UserCircle
 } from "lucide-react";
 import SingleResearch from "@/components/SingleResearch";
 import BatchResearch from "@/components/BatchResearch";
@@ -39,6 +37,15 @@ const getErrorMessage = (error: unknown, fallback: string) => {
   return error instanceof Error ? error.message : fallback;
 };
 
+const getStoredProviders = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("mass10_providers") || "[]");
+    return Array.isArray(parsed) ? parsed.filter(item => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
 const DEFAULT_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 
 export default function Home() {
@@ -58,10 +65,7 @@ export default function Home() {
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [accountSettings, setAccountSettings] = useState<AccountSettings | null>(null);
-  const [isAccountAdmin, setIsAccountAdmin] = useState(false);
-  const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
-  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [savedProviders, setSavedProviders] = useState<string[]>([]);
 
   const hasSupabaseAuthConfig =
     !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
@@ -81,6 +85,7 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       setMarkup(parseInt(localStorage.getItem("mass10_markup") || "10") || 10);
       setSupplier(localStorage.getItem("mass10_supplier") || "");
+      setSavedProviders(getStoredProviders());
       setAnthropicApiKey(localStorage.getItem("mass10_anthropic_key") || "");
       setSupabaseUrl(localStorage.getItem("mass10_supabase_url") || DEFAULT_SUPABASE_URL);
       setSupabaseKey("");
@@ -101,12 +106,10 @@ export default function Home() {
     if (!data.user) {
       setAccountEmail("");
       setAccountSettings(null);
-      setIsAccountAdmin(false);
       return;
     }
 
     setAccountEmail(data.user.email || "");
-    setIsAccountAdmin(!!data.user.isAdmin);
     setAccountSettings(data.settings || null);
 
     if (data.settings?.supabaseProjectUrl) {
@@ -147,7 +150,6 @@ export default function Home() {
         });
       } else {
         setAccountSettings(null);
-        setIsAccountAdmin(false);
       }
     });
 
@@ -156,10 +158,27 @@ export default function Home() {
     };
   }, [addToast, hasSupabaseAuthConfig]);
 
+  const saveProvider = (value: string) => {
+    const provider = value.trim();
+    if (!provider) return "";
+
+    setSavedProviders(prev => {
+      const withoutDuplicate = prev.filter(
+        item => item.toLowerCase() !== provider.toLowerCase()
+      );
+      const next = [provider, ...withoutDuplicate].slice(0, 30);
+      localStorage.setItem("mass10_providers", JSON.stringify(next));
+      return next;
+    });
+
+    return provider;
+  };
+
   // Save settings helpers
   const handleSaveSettings = async () => {
+    const normalizedProvider = saveProvider(supplier);
     localStorage.setItem("mass10_markup", String(markup));
-    localStorage.setItem("mass10_supplier", supplier);
+    localStorage.setItem("mass10_supplier", normalizedProvider);
     localStorage.setItem("mass10_anthropic_key", anthropicApiKey);
     localStorage.setItem("mass10_supabase_url", supabaseUrl);
     localStorage.removeItem("mass10_supabase_key");
@@ -231,44 +250,11 @@ export default function Home() {
       if (error) throw error;
       setAccountEmail("");
       setAccountSettings(null);
-      setIsAccountAdmin(false);
       addToast("Logged out. Local settings are still available.", "info");
     } catch (err: unknown) {
       addToast(getErrorMessage(err, "Could not log out."), "error");
     } finally {
       setIsAuthLoading(false);
-    }
-  };
-
-  const handleCreateUser = async () => {
-    if (!newUserEmail.trim() || !newUserPassword.trim()) {
-      addToast("Enter the new user's email and password.", "error");
-      return;
-    }
-
-    setIsCreatingUser(true);
-    try {
-      const response = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: newUserEmail,
-          password: newUserPassword,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Could not create user.");
-      }
-
-      setNewUserEmail("");
-      setNewUserPassword("");
-      addToast(data.message || "User created and emailed.", data.email?.sent ? "success" : "info");
-    } catch (err: unknown) {
-      addToast(getErrorMessage(err, "Could not create user."), "error");
-    } finally {
-      setIsCreatingUser(false);
     }
   };
 
@@ -440,12 +426,25 @@ export default function Home() {
               Provider *
             </span>
             <input
+              list="mass10-provider-options"
               type="text"
               placeholder="e.g. Pinnacle"
               value={supplier}
               onChange={e => setSupplier(e.target.value)}
+              onBlur={e => saveProvider(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  saveProvider(e.currentTarget.value);
+                  e.currentTarget.blur();
+                }
+              }}
               className="bg-transparent text-xs text-[#e8eaf0] font-semibold w-28 focus:outline-none"
             />
+            <datalist id="mass10-provider-options">
+              {savedProviders.map(provider => (
+                <option key={provider} value={provider} />
+              ))}
+            </datalist>
           </div>
 
           <div className="w-px h-6 bg-[#272c3f] hidden md:block"></div>
@@ -553,7 +552,7 @@ export default function Home() {
               <div className="bg-[#10b981]/5 border border-[#10b981]/25 rounded-xl p-3.5 flex gap-2 text-xs text-[#8c92a4]">
                 <Info className="h-4 w-4 text-[#10b981] shrink-0" />
                 <span>
-                  Log in to load saved Supabase credentials. New accounts can only be created by an approved admin through this backend.
+                  Log in to load saved Supabase credentials and API settings. New accounts are managed outside this app.
                 </span>
               </div>
 
@@ -613,50 +612,6 @@ export default function Home() {
                   </div>
                 )}
               </div>
-
-              {isAccountAdmin && (
-                <div className="bg-[#01b3fd]/5 border border-[#01b3fd]/20 rounded-xl p-4 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <UserPlus className="h-4 w-4 text-[#01b3fd]" />
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold text-[#e8eaf0]">
-                        Admin User Creation
-                      </span>
-                      <span className="text-[11px] text-[#8c92a4]">
-                        Creates a confirmed Supabase user and sends the access email via Resend.
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
-                    <input
-                      type="email"
-                      placeholder="New user email"
-                      value={newUserEmail}
-                      onChange={e => setNewUserEmail(e.target.value)}
-                      className="bg-[#151823] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
-                    />
-                    <input
-                      type="password"
-                      placeholder="Temporary password"
-                      value={newUserPassword}
-                      onChange={e => setNewUserPassword(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") handleCreateUser();
-                      }}
-                      className="bg-[#151823] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
-                    />
-                    <button
-                      onClick={handleCreateUser}
-                      disabled={isCreatingUser}
-                      className="bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <Mail className="h-3.5 w-3.5" />
-                      <span>{isCreatingUser ? "Creating..." : "Create & Email"}</span>
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Anthropic field */}
               <div className="flex flex-col gap-1.5">

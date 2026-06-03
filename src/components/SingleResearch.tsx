@@ -23,7 +23,8 @@ import {
   ProductPayload,
   getCompetitorSearchUrl,
   getImageSearchUrl,
-  downloadCSV
+  downloadCSV,
+  parseFlexibleDecimal
 } from "@/lib/utils";
 
 interface SingleResearchProps {
@@ -69,7 +70,7 @@ export default function SingleResearch({
 
   // Keep pricing updated when cost, markup changes
   useEffect(() => {
-    const cost = parseFloat(costExcl.replace(/[^\d.]/g, "")) || 0;
+    const cost = parseFlexibleDecimal(costExcl);
     const computed = calculatePricing(cost, markup);
     setPrices({
       costExcl: cost,

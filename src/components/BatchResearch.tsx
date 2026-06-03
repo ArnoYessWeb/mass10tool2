@@ -32,7 +32,8 @@ import {
   buildPayload,
   getCompetitorSearchUrl,
   getImageSearchUrl,
-  downloadCSV
+  downloadCSV,
+  parseFlexibleDecimal
 } from "@/lib/utils";
 
 interface QueueItem {
@@ -159,7 +160,7 @@ export default function BatchResearch({
             const sku = row.sku || "";
             const desc = row.short_description || row.description || "";
             const costStr = row.cost_excl_vat || row.cost || row.price || "0";
-            const cost = parseFloat(costStr.replace(/[^\d.]/g, "")) || 0;
+            const cost = parseFlexibleDecimal(costStr);
 
             if (!sku) return null;
 
@@ -1234,7 +1235,7 @@ export default function BatchResearch({
                                       step="0.01"
                                       value={p.cost_price_excl_vat}
                                       onChange={e => {
-                                        const costVal = parseFloat(e.target.value) || 0;
+                                        const costVal = parseFlexibleDecimal(e.target.value);
                                         const pricing = calculatePricing(costVal, markup);
                                         updateModalPayload(selectedItem.id, "cost_price_excl_vat", costVal);
                                         updateModalPayload(selectedItem.id, "price_excl_vat", pricing.sellExcl);
@@ -1258,7 +1259,7 @@ export default function BatchResearch({
                                       type="number"
                                       step="0.01"
                                       value={p.price_excl_vat}
-                                      onChange={e => updateModalPayload(selectedItem.id, "price_excl_vat", parseFloat(e.target.value) || 0)}
+                                      onChange={e => updateModalPayload(selectedItem.id, "price_excl_vat", parseFlexibleDecimal(e.target.value))}
                                       disabled={isExcluded}
                                       className="w-full bg-[#151823] text-sm text-[#e8eaf0] border border-[#272c3f] rounded-lg pl-8 pr-4 py-2 focus:outline-none focus:border-[#01b3fd] disabled:opacity-50 font-mono"
                                     />
