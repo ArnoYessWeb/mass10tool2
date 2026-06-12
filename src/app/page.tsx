@@ -56,6 +56,8 @@ export default function Home() {
   const [markup, setMarkup] = useState<number>(10);
   const [supplier, setSupplier] = useState<string>("");
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>("");
+  const [openAiApiKey, setOpenAiApiKey] = useState<string>("");
+  const [aiProvider, setAiProvider] = useState<"Claude" | "OpenAI">("Claude");
   const [supabaseUrl, setSupabaseUrl] = useState<string>(DEFAULT_SUPABASE_URL);
   const [supabaseKey, setSupabaseKey] = useState<string>("");
   const [supabaseTable, setSupabaseTable] = useState<string>("products");
@@ -87,6 +89,8 @@ export default function Home() {
       setSupplier(localStorage.getItem("mass10_supplier") || "");
       setSavedProviders(getStoredProviders());
       setAnthropicApiKey(localStorage.getItem("mass10_anthropic_key") || "");
+      setOpenAiApiKey(localStorage.getItem("mass10_openai_key") || "");
+      setAiProvider((localStorage.getItem("mass10_ai_provider") as "Claude" | "OpenAI") || "Claude");
       setSupabaseUrl(localStorage.getItem("mass10_supabase_url") || DEFAULT_SUPABASE_URL);
       setSupabaseKey("");
       setSupabaseTable(localStorage.getItem("mass10_supabase_table") || "products");
@@ -174,12 +178,13 @@ export default function Home() {
     return provider;
   };
 
-  // Save settings helpers
   const handleSaveSettings = async () => {
     const normalizedProvider = saveProvider(supplier);
     localStorage.setItem("mass10_markup", String(markup));
     localStorage.setItem("mass10_supplier", normalizedProvider);
     localStorage.setItem("mass10_anthropic_key", anthropicApiKey);
+    localStorage.setItem("mass10_openai_key", openAiApiKey);
+    localStorage.setItem("mass10_ai_provider", aiProvider);
     localStorage.setItem("mass10_supabase_url", supabaseUrl);
     localStorage.removeItem("mass10_supabase_key");
     localStorage.setItem("mass10_supabase_table", supabaseTable);
@@ -274,7 +279,9 @@ export default function Home() {
 
   // Credentials configured status checkers
   const isApiKeyConfigured =
-    !!anthropicApiKey.trim() || !!accountSettings?.hasAnthropicApiKey;
+    aiProvider === "OpenAI"
+      ? !!openAiApiKey.trim()
+      : (!!anthropicApiKey.trim() || !!accountSettings?.hasAnthropicApiKey);
   const isSupabaseConfigured =
     !!supabaseUrl.trim() && hasSupabaseAuthConfig;
 
@@ -447,6 +454,26 @@ export default function Home() {
             </datalist>
           </div>
 
+          {/* AI Provider */}
+          <div className="flex items-center gap-2 bg-[#1c2030] px-3 py-1.5 rounded-lg border border-[#272c3f]">
+            <span className="text-xs text-[#8c92a4] font-semibold flex items-center gap-1">
+              <Sparkles className="h-3.5 w-3.5 text-[#01b3fd]" />
+              AI:
+            </span>
+            <select
+              value={aiProvider}
+              onChange={e => {
+                const val = e.target.value as "Claude" | "OpenAI";
+                setAiProvider(val);
+                localStorage.setItem("mass10_ai_provider", val);
+              }}
+              className="bg-transparent text-xs text-[#e8eaf0] font-semibold focus:outline-none cursor-pointer"
+            >
+              <option value="Claude" className="bg-[#1c2030]">Claude</option>
+              <option value="OpenAI" className="bg-[#1c2030]">OpenAI</option>
+            </select>
+          </div>
+
           <div className="w-px h-6 bg-[#272c3f] hidden md:block"></div>
 
           {/* Credentials Indicators */}
@@ -510,6 +537,8 @@ export default function Home() {
               markup={markup}
               supplier={supplier}
               anthropicApiKey={anthropicApiKey}
+              openAiApiKey={openAiApiKey}
+              aiProvider={aiProvider}
               customSupabaseUrl={supabaseUrl}
               customSupabaseKey={supabaseKey}
               customSupabaseTable={supabaseTable}
@@ -520,6 +549,8 @@ export default function Home() {
               markup={markup}
               supplier={supplier}
               anthropicApiKey={anthropicApiKey}
+              openAiApiKey={openAiApiKey}
+              aiProvider={aiProvider}
               customSupabaseUrl={supabaseUrl}
               customSupabaseKey={supabaseKey}
               customSupabaseTable={supabaseTable}
@@ -627,6 +658,21 @@ export default function Home() {
                   placeholder={accountSettings?.hasAnthropicApiKey ? "Leave blank to keep saved Claude key" : "Paste sk-ant-... API key"}
                   value={anthropicApiKey}
                   onChange={e => setAnthropicApiKey(e.target.value)}
+                  className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
+                />
+              </div>
+
+              {/* OpenAI field */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#8c92a4] flex items-center gap-1">
+                  <Key className="h-3.5 w-3.5 text-[#01b3fd]" />
+                  <span>OpenAI API Key</span>
+                </label>
+                <input
+                  type="password"
+                  placeholder="Paste sk-proj-... API Key"
+                  value={openAiApiKey}
+                  onChange={e => setOpenAiApiKey(e.target.value)}
                   className="bg-[#1c2030] text-[#e8eaf0] border border-[#272c3f] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#01b3fd] transition-colors"
                 />
               </div>

@@ -50,6 +50,8 @@ interface BatchResearchProps {
   markup: number;
   supplier: string;
   anthropicApiKey: string;
+  openAiApiKey: string;
+  aiProvider: "Claude" | "OpenAI";
   customSupabaseUrl: string;
   customSupabaseKey: string;
   customSupabaseTable: string;
@@ -60,6 +62,8 @@ export default function BatchResearch({
   markup,
   supplier,
   anthropicApiKey,
+  openAiApiKey,
+  aiProvider,
   customSupabaseUrl,
   customSupabaseKey,
   customSupabaseTable,
@@ -323,7 +327,9 @@ export default function BatchResearch({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-anthropic-api-key": anthropicApiKey
+            "x-anthropic-api-key": anthropicApiKey,
+            "x-openai-api-key": openAiApiKey,
+            "x-ai-provider": aiProvider
           },
           body: JSON.stringify({
             sku: items[i].sku,

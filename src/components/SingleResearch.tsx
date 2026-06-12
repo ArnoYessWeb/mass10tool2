@@ -31,6 +31,8 @@ interface SingleResearchProps {
   markup: number;
   supplier: string;
   anthropicApiKey: string;
+  openAiApiKey: string;
+  aiProvider: "Claude" | "OpenAI";
   customSupabaseUrl: string;
   customSupabaseKey: string;
   customSupabaseTable: string;
@@ -41,6 +43,8 @@ export default function SingleResearch({
   markup,
   supplier,
   anthropicApiKey,
+  openAiApiKey,
+  aiProvider,
   customSupabaseUrl,
   customSupabaseKey,
   customSupabaseTable,
@@ -126,7 +130,9 @@ export default function SingleResearch({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-anthropic-api-key": anthropicApiKey
+          "x-anthropic-api-key": anthropicApiKey,
+          "x-openai-api-key": openAiApiKey,
+          "x-ai-provider": aiProvider
         },
         body: JSON.stringify({ sku, description })
       });
@@ -359,7 +365,7 @@ export default function SingleResearch({
               <Sparkles className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-[#01b3fd] h-6 w-6 animate-pulse" />
             </div>
             <div className="max-w-md">
-              <h3 className="text-lg font-bold text-[#e8eaf0]">Claude is researching...</h3>
+              <h3 className="text-lg font-bold text-[#e8eaf0]">{aiProvider} is researching...</h3>
               <p className="text-sm text-[#8c92a4] mt-2 animate-pulse">
                 Analyzing specification databases for SKU <strong>{sku}</strong>. Generating descriptions and classifying dimensions...
               </p>

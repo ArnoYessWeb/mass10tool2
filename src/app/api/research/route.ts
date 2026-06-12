@@ -69,61 +69,103 @@ export async function POST(req: Request) {
       );
     }
 
-    const clientKey = req.headers.get("x-anthropic-api-key");
+    const provider = req.headers.get("x-ai-provider") || "Claude";
+
     let account: Awaited<ReturnType<typeof getAuthenticatedSettings>> = null;
     try {
       account = await getAuthenticatedSettings();
     } catch (settingsError) {
-      console.warn("Could not load account Claude key:", settingsError);
-    }
-    const apiKey = resolveAnthropicApiKey(clientKey, account?.settings);
-
-    if (!apiKey || apiKey === "your_anthropic_api_key_here") {
-      return NextResponse.json(
-        { error: "Claude API key is not configured. Log in and add it to Settings, or add it to local Settings/server environment." },
-        { status: 401 }
-      );
+      console.warn("Could not load account settings:", settingsError);
     }
 
     const prompt = USER_PROMPT_TEMPLATE
       .replace("{sku}", sku)
       .replace("{desc}", description);
 
-    // Call the Anthropic API via direct fetch
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 3000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
+    let text = "";
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({})) as {
-        error?: { message?: string };
-      };
-      const errorMessage = errorData?.error?.message || `Anthropic API returned status ${response.status}`;
-      return NextResponse.json({ error: errorMessage }, { status: response.status });
+    if (provider === "OpenAI") {
+      const clientKey = req.headers.get("x-openai-api-key");
+      const apiKey = clientKey || process.env.OPENAI_API_KEY;
+
+      if (!apiKey || apiKey === "your_openai_api_key_here") {
+        return NextResponse.json(
+          { error: "OpenAI API key is not configured. Please add it to your settings or server environment." },
+          { status: 401 }
+        );
+      }
+
+      const model = process.env.OPENAI_MODEL || "gpt-4o";
+
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: prompt }
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData?.error?.message || `OpenAI API returned status ${response.status}`;
+        return NextResponse.json({ error: errorMessage }, { status: response.status });
+      }
+
+      const responseData = await response.json();
+      text = responseData?.choices?.[0]?.message?.content || "";
+    } else {
+      const clientKey = req.headers.get("x-anthropic-api-key");
+      const apiKey = resolveAnthropicApiKey(clientKey, account?.settings);
+
+      if (!apiKey || apiKey === "your_anthropic_api_key_here") {
+        return NextResponse.json(
+          { error: "Claude API key is not configured. Log in and add it to Settings, or add it to local Settings/server environment." },
+          { status: 401 }
+        );
+      }
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 3000,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({})) as {
+          error?: { message?: string };
+        };
+        const errorMessage = errorData?.error?.message || `Anthropic API returned status ${response.status}`;
+        return NextResponse.json({ error: errorMessage }, { status: response.status });
+      }
+
+      const responseData = await response.json();
+      text = responseData?.content?.[0]?.text || "";
     }
 
-    const responseData = await response.json();
-    let text = responseData?.content?.[0]?.text || "";
-
-    // Clean markdown code fences if Claude includes them
-    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    // Clean markdown code fences if AI includes them
+    text = text.replace(/```json/gi, "").replace(/```/g, "").trim();
 
     try {
       const parsedData = JSON.parse(text);
       return NextResponse.json(parsedData);
     } catch {
-      console.error("Failed to parse JSON response from Claude:", text);
+      console.error(`Failed to parse JSON response from ${provider}:`, text);
       return NextResponse.json(
         { error: "AI returned invalid JSON. Please try again.", rawResponse: text },
         { status: 500 }
